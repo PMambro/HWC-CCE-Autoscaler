@@ -13,6 +13,14 @@ provider "huaweicloud" {
     secret_key = var.hwc_secret_key
 }
 
+data "huaweicloud_enterprise_project" "main" {
+  name = var.enterprise_project
+}
+
+locals {
+  enterprise_project_id = data.huaweicloud_enterprise_project.main.id
+}
+
 data "huaweicloud_vpc" "vpc"{
     name = "vpc-prm"
 }
@@ -53,21 +61,40 @@ resource "huaweicloud_compute_instance" "ecs" {
 }
 
 resource "huaweicloud_vpc_eip" "eip" {
+    name = "eip-nat"
     publicip {
         type = "5_bgp"
     }
 
     bandwidth {
-      name = "eip-bastion"
+      name = "eip-nat"
       size = 100
       share_type = "PER"
       charge_mode = "traffic"
     }   
 }
 
-resource "huaweicloud_compute_eip_associate" "associated" {
-    public_ip = huaweicloud_vpc_eip.eip.address
-    instance_id = huaweicloud_compute_instance.ecs.id
+resource "huaweicloud_nat_gateway" "nat" {
+  name        = "nat-K8s-ArgoCD"
+  spec        = "1"
+  vpc_id      = data.huaweicloud_vpc.vpc.id
+  subnet_id   = data.huaweicloud_vpc_subnet.net.id
+  enterprise_project_id = local.enterprise_project_id
+}
+
+resource "huaweicloud_nat_snat_rule" "test" {
+  nat_gateway_id = huaweicloud_nat_gateway.nat.id
+  floating_ip_id = huaweicloud_vpc_eip.eip.id
+  subnet_id      = data.huaweicloud_vpc_subnet.net.id
+}
+
+resource "huaweicloud_nat_dnat_rule" "bastion_ssh" {
+    nat_gateway_id = huaweicloud_nat_gateway.nat.id
+    floating_ip_id = huaweicloud_vpc_eip.eip.id
+    port_id = huaweicloud_compute_instance.ecs.network[0].port
+    protocol = "tcp"
+    internal_service_port = 22
+    external_service_port = var.bastion_public_port
 }
 
 resource "huaweicloud_cce_node_pool" "node_pool" {
